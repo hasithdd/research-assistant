@@ -63,3 +63,12 @@ def chunk_text_semantic(text: str, chunk_size: int = 500, overlap: int = 100):
         chunks.append(" ".join(cur))
 
     return chunks
+
+
+def section_aware_chunks(sections: dict, chunk_size=500, overlap=100):
+    result = []
+    for sec_name, sec_text in sections.items():
+        chunks = chunk_text_semantic(sec_text, chunk_size, overlap)
+        for c in chunks:
+            result.append({"section": sec_name, "text": c})
+    return result
