@@ -33,16 +33,19 @@ def _heuristic_metadata_from_text(text: str) -> dict:
     return {"title": title, "authors": authors}
 
 
-def _heuristic_validate_structure(text: str) -> bool:
-    """Check if essential scientific sections exist."""
-
+def _heuristic_validate_structure(text: str) -> dict:
+    """Return dict of detected sections."""
     lower = text.lower()
 
-    required_sections = ["abstract", "introduction", "method", "result", "conclusion"]
+    sections = {
+        "abstract": "abstract" in lower,
+        "introduction": "introduction" in lower,
+        "methodology": any(k in lower for k in ["methodology", "methods", "approach"]),
+        "results": any(k in lower for k in ["results", "findings"]),
+        "conclusion": "conclusion" in lower,
+    }
 
-    hits = sum(1 for sec in required_sections if sec in lower)
-
-    return hits >= 3
+    return sections
 
 
 def extract_text_and_metadata(file_path: Path) -> tuple[str, dict]:
