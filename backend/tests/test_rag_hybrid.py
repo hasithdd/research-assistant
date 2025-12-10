@@ -1,5 +1,5 @@
-from app.services.vectorstore import ingest_document
 from app.services.rag_engine import answer_query
+from app.services.vectorstore import ingest_document
 
 
 def test_hybrid_retrieval_merging():
