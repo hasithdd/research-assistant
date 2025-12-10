@@ -52,23 +52,42 @@ def _heuristic_validate_structure(text: str) -> dict:
 
 
 def extract_text_and_metadata(file_path: Path) -> tuple[str, dict]:
-    """Main PDF extraction pipeline: try both engines, pick best, validate."""
+    """
+    Full extraction pipeline:
+    - Try pdfplumber + pymupdf
+    - Validate structure
+    - If invalid → OCR fallback → LLM validate
+    """
 
-    text1 = _extract_with_pdfplumber(file_path)
-    text2 = _extract_with_pymupdf(file_path)
+    t1 = _extract_with_pdfplumber(file_path)
+    t2 = _extract_with_pymupdf(file_path)
 
-    best_text = text1 if len(text1) > len(text2) else text2
+    best = t1 if len(t1) > len(t2) else t2
 
-    if len(best_text.strip()) == 0:
-        raise ValueError("Unable to extract text from PDF")
+    if not best.strip():
+        best = _ocr_fallback(file_path)
 
-    is_valid = _heuristic_validate_structure(best_text)
-    if not is_valid:
-        raise ValueError("PDF structure invalid: missing scientific sections")
+    heur = _heuristic_validate_structure(best)
+    llm = _llm_quick_validate(best)
 
-    metadata = _heuristic_metadata_from_text(best_text)
+    combined = {k: heur[k] or llm[k] for k in heur.keys()}
 
-    return best_text, metadata
+    valid = sum(combined.values()) >= 3
+
+    if not valid:
+        ocr_text = _ocr_fallback(file_path)
+        heur = _heuristic_validate_structure(ocr_text)
+        llm = _llm_quick_validate(ocr_text)
+        combined = {k: heur[k] or llm[k] for k in heur.keys()}
+        valid = sum(combined.values()) >= 3
+
+        if not valid:
+            raise ValueError("PDF structure invalid even after OCR fallback")
+
+        best = ocr_text
+
+    metadata = _heuristic_metadata_from_text(best)
+    return best, metadata
 
 
 def _llm_quick_validate(text: str) -> dict:
