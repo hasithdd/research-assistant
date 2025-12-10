@@ -10,42 +10,6 @@ def _call_llm_for_summary(text: str) -> str:
     return text[:500].strip()
 
 
-def _extract_first_n_sentences(text: str, n: int = 3) -> str:
-    """Naive sentence splitter."""
-    import re
-
-    sentences = re.split(r"(?<=[.!?])\s+", text)
-    return " ".join(sentences[:n]).strip()
-
-
-def generate_structured_summary(text: str, metadata: dict) -> dict:
-    sections = split_to_sections(text)
-
-    section_summaries = {}
-    for sec_name, sec_text in sections.items():
-        section_summaries[sec_name] = _llm_summarize_section(sec_name, sec_text)
-
-    global_summary = _llm_global_summary(section_summaries)
-
-    required = {
-        "title": metadata.get("title", ""),
-        "authors": metadata.get("authors", ""),
-        "abstract": section_summaries.get("abstract", global_summary),
-        "problem_statement": section_summaries.get("introduction", global_summary),
-        "methodology": section_summaries.get("method")
-        or section_summaries.get("methodology")
-        or "",
-        "key_results": section_summaries.get("results")
-        or section_summaries.get("findings")
-        or "",
-        "conclusion": section_summaries.get("conclusion", ""),
-        "overall_summary": global_summary,
-        "section_summaries": section_summaries,
-    }
-
-    return required
-
-
 def _llm_summarize_section(sec_name: str, sec_text: str) -> str:
     """
     Summarize a section into 2–4 sentences using LLM, if available.
@@ -108,3 +72,39 @@ def _llm_global_summary(section_summaries: dict) -> str:
         return resp["choices"][0]["message"]["content"].strip()
     except Exception:
         return combined[:600]
+
+
+def _extract_first_n_sentences(text: str, n: int = 3) -> str:
+    """Naive sentence splitter."""
+    import re
+
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    return " ".join(sentences[:n]).strip()
+
+
+def generate_structured_summary(text: str, metadata: dict) -> dict:
+    sections = split_to_sections(text)
+
+    section_summaries = {}
+    for sec_name, sec_text in sections.items():
+        section_summaries[sec_name] = _llm_summarize_section(sec_name, sec_text)
+
+    global_summary = _llm_global_summary(section_summaries)
+
+    required = {
+        "title": metadata.get("title", ""),
+        "authors": metadata.get("authors", ""),
+        "abstract": section_summaries.get("abstract", global_summary),
+        "problem_statement": section_summaries.get("introduction", global_summary),
+        "methodology": section_summaries.get("method")
+        or section_summaries.get("methodology")
+        or "",
+        "key_results": section_summaries.get("results")
+        or section_summaries.get("findings")
+        or "",
+        "conclusion": section_summaries.get("conclusion", ""),
+        "overall_summary": global_summary,
+        "section_summaries": section_summaries,
+    }
+
+    return required
