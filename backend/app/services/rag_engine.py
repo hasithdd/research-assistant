@@ -4,12 +4,9 @@ from typing import Any, Dict, List
 
 from app.core.config import settings
 from app.services.file_manager import load_summary
-from app.services.vectorstore import (
-    _inmem_index,
-)
-from app.services.vectorstore import (
-    query as vector_query,
-)
+from app.services.vectorstore import _inmem_index
+from app.services.vectorstore import query as vector_query
+from app.utils.cache import rag_query_cache_key, rag_ttl_cache
 
 SECTION_WEIGHTS = {
     "method": 1.2,
@@ -25,14 +22,39 @@ SECTION_WEIGHTS = {
 }
 
 
+def _normalize_scores(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Normalize score values into 0–1 range for stable ranking."""
+    if not entries:
+        return entries
+
+    scores = [e["score"] for e in entries]
+    min_s, max_s = min(scores), max(scores)
+
+    if max_s == min_s:
+        for e in entries:
+            e["score"] = 1.0
+        return entries
+
+    for e in entries:
+        e["score"] = (e["score"] - min_s) / (max_s - min_s)
+
+    return entries
+
+
+def _compress_text(text: str, max_chars: int = 600) -> str:
+    """
+    Compress context text while keeping the beginning and end.
+    """
+    if len(text) <= max_chars:
+        return text
+
+    half = max_chars // 2
+    return text[:half] + "\n...\n" + text[-half:]
+
+
 def _keyword_retrieve_by_section(
     paper_id: str, query: str, top_k: int = 5
 ) -> List[Dict[str, Any]]:
-    """
-    Naive keyword retriever returning:
-        [{"text":..., "section":..., "score":...}]
-    Uses in-memory vectorstore if available; else abstracts in summary.
-    """
     coll = f"paper_{paper_id}"
 
     if coll in _inmem_index:
@@ -52,9 +74,9 @@ def _keyword_retrieve_by_section(
 
     for txt, meta in zip(texts, metas):
         t_tokens = set(re.findall(r"\w+", txt.lower()))
-        intersection = q_tokens & t_tokens
-        if intersection:
-            scored.append((len(intersection), txt, meta.get("section", "unknown")))
+        overlap = len(q_tokens & t_tokens)
+        if overlap > 0:
+            scored.append((overlap, txt, meta.get("section", "unknown")))
 
     scored.sort(key=lambda x: x[0], reverse=True)
 
@@ -67,14 +89,13 @@ def _keyword_retrieve_by_section(
 def _section_boost(section: str, question: str) -> float:
     sec = section.lower()
     weight = SECTION_WEIGHTS.get(sec, 1.0)
-
     q = question.lower()
 
-    if any(word in q for word in ["method", "approach", "dataset", "experiment"]):
+    if any(w in q for w in ["method", "approach", "dataset", "experiment"]):
         if sec in ("method", "methodology", "experiments"):
             weight += 0.25
 
-    if any(word in q for word in ["result", "finding", "accuracy", "performance"]):
+    if any(w in q for w in ["result", "finding", "accuracy", "performance"]):
         if sec in ("results", "findings"):
             weight += 0.25
 
@@ -82,59 +103,60 @@ def _section_boost(section: str, question: str) -> float:
 
 
 def answer_query(paper_id: str, question: str, top_k: int = 5) -> Dict[str, Any]:
-    """
-    Hybrid RAG Pipeline:
-    1. Vector retrieval (semantic)
-    2. Keyword fallback retrieval
-    3. Merge results & apply section-based re-ranking
-    4. Build LLM prompt with summaries and chunks
-    5. Generate LLM final answer OR fallback to excerpts
-    """
-    vec_hits = vector_query(paper_id, question, top_k=top_k)
+    cache_key = rag_query_cache_key(paper_id, question)
+    cached = rag_ttl_cache.get(cache_key)
+    if cached:
+        return cached
 
+    vec_hits = vector_query(paper_id, question, top_k=top_k)
     kw_hits = _keyword_retrieve_by_section(paper_id, question, top_k=top_k)
+
+    vec_hits = _normalize_scores(vec_hits)
+    kw_hits = _normalize_scores(kw_hits)
 
     merged: Dict[str, Dict[str, Any]] = {}
 
     for hit in vec_hits:
-        text = hit["text"].strip()
-        merged[text] = {
-            "text": text,
+        t = hit["text"].strip()
+        merged[t] = {
+            "text": t,
             "section": hit.get("section", "unknown"),
             "score": float(hit.get("score", 1.0)),
         }
 
     for hit in kw_hits:
-        text = hit["text"].strip()
-        if text in merged:
-            merged[text]["score"] = max(merged[text]["score"], hit["score"] + 0.01)
+        t = hit["text"].strip()
+        if t in merged:
+            merged[t]["score"] = max(merged[t]["score"], hit["score"] + 0.01)
         else:
-            merged[text] = {
-                "text": text,
+            merged[t] = {
+                "text": t,
                 "section": hit.get("section", "unknown"),
                 "score": float(hit["score"]),
             }
 
     ranked = []
     for entry in merged.values():
-        boosted_score = entry["score"] * _section_boost(entry["section"], question)
-        ranked.append((boosted_score, entry))
+        boosted = entry["score"] * _section_boost(entry["section"], question)
+        ranked.append((boosted, entry))
 
     top_ranked = heapq.nlargest(top_k, ranked, key=lambda x: x[0])
     top_chunks = [entry for score, entry in top_ranked]
 
     if not top_chunks:
-        return {
+        result = {
             "answer": "No relevant information found in the document.",
             "sources": [],
         }
+        return result
 
     summary = load_summary(paper_id) or {}
     overall = summary.get("overall_summary", "")
     sec_summaries = summary.get("section_summaries", {})
 
     context_parts = [
-        f"[{i}] ({c['section']}) {c['text'][:1000]}" for i, c in enumerate(top_chunks)
+        f"[{i}] ({c['section']}) {_compress_text(c['text'], 1000)}"
+        for i, c in enumerate(top_chunks)
     ]
     context = "\n\n".join(context_parts)
 
@@ -167,15 +189,19 @@ Answer clearly and concisely:
                 temperature=0.0,
             )
             answer = resp["choices"][0]["message"]["content"].strip()
-            return {
+            result = {
                 "answer": answer,
                 "sources": [f"{c['section']}:{i}" for i, c in enumerate(top_chunks)],
             }
+            return result
         except Exception:
             pass
 
     combined = " ".join([c["text"][:500] for c in top_chunks])
-    return {
+    result = {
         "answer": f"Relevant excerpts: {combined}",
         "sources": [f"{c['section']}:{i}" for i, c in enumerate(top_chunks)],
     }
+
+    rag_ttl_cache.set(cache_key, result)
+    return result

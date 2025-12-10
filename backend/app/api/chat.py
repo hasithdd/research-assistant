@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
-from app.models.schemas import ChatRequest, ChatResponse
+from app.models.schemas import ChatRequest, ChatResponse, ChatSource
 from app.services.rag_engine import answer_query
 
 router = APIRouter()
@@ -10,18 +10,16 @@ router = APIRouter()
 def chat(req: ChatRequest):
     try:
         result = answer_query(req.paper_id, req.query)
-        formatted_sources = []
+
+        sources: list[ChatSource] = []
         for s in result.get("sources", []):
             if isinstance(s, str) and ":" in s:
                 section, idx = s.split(":", 1)
-                formatted_sources.append({"section": section, "index": int(idx)})
+                sources.append(ChatSource(section=section, index=int(idx)))
             else:
-                formatted_sources.append({"raw": s})
+                sources.append(ChatSource(raw=str(s)))
 
-        return {
-            "answer": result["answer"],
-            "sources": formatted_sources,
-        }
+        return ChatResponse(answer=result["answer"], sources=sources)
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
