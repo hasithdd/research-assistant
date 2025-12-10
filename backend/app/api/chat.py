@@ -1,8 +1,11 @@
 from fastapi import APIRouter
+from app.models.schemas import ChatRequest, ChatResponse
 
 router = APIRouter()
 
-
-@router.post("/")
-async def chat():
-    return {"answer": "chat placeholder"}
+@router.post("/", response_model=ChatResponse)
+def chat(request: ChatRequest):
+    return ChatResponse(
+        answer="RAG not implemented yet. This is a placeholder response.",
+        sources=[]
+    )
