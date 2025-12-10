@@ -1,7 +1,10 @@
+from io import BytesIO
 from pathlib import Path
 
 import fitz
 import pdfplumber
+import pytesseract
+from PIL import Image
 
 from app.core.config import settings
 
@@ -110,3 +113,18 @@ def _llm_quick_validate(text: str) -> dict:
         return json.loads(j)
     except Exception:
         return _heuristic_validate_structure(text)
+
+
+def _ocr_fallback(file_path: Path) -> str:
+    """Convert pages to images and OCR them."""
+    doc = fitz.open(file_path)
+    ocr_texts = []
+
+    for page in doc:
+        pix = page.get_pixmap(dpi=150)
+        img_bytes = pix.tobytes("png")
+        image = Image.open(BytesIO(img_bytes))
+        text = pytesseract.image_to_string(image)
+        ocr_texts.append(text)
+
+    return "\n".join(ocr_texts).strip()
