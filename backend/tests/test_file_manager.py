@@ -1,5 +1,5 @@
 from app.services.file_manager import create_paper_folder
-from pathlib import Path
+
 
 def test_create_paper_folder(tmp_path, monkeypatch):
     monkeypatch.setattr("app.services.file_manager.BASE_STORAGE", tmp_path)

@@ -1,7 +1,9 @@
 from fastapi import APIRouter, HTTPException
+
 from app.services.file_manager import load_summary
 
 router = APIRouter()
+
 
 @router.get("/{paper_id}")
 def get_summary(paper_id: str):

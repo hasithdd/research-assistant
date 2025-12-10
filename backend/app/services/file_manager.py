@@ -1,6 +1,6 @@
+import json
 from pathlib import Path
 from typing import Optional
-import json
 
 BASE_STORAGE = Path("storage")
 BASE_STORAGE.mkdir(exist_ok=True)
