@@ -1,4 +1,5 @@
 from app.core.config import settings
+from app.utils.chunking import split_to_sections
 
 
 def _call_llm_for_summary(text: str) -> str:
@@ -18,29 +19,31 @@ def _extract_first_n_sentences(text: str, n: int = 3) -> str:
 
 
 def generate_structured_summary(text: str, metadata: dict) -> dict:
-    """
-    Baseline summarizer: no LLM, no semantic logic.
-    Extracts simple chunks from text and fills in required schema.
-    """
+    sections = split_to_sections(text)
 
-    title = metadata.get("title", "")
-    authors = metadata.get("authors", "")
+    section_summaries = {}
+    for sec_name, sec_text in sections.items():
+        section_summaries[sec_name] = _llm_summarize_section(sec_name, sec_text)
 
-    abstract = text[:800].strip()
-    problem_statement = _extract_first_n_sentences(text, 2)
-    methodology = text[1000:1500].strip()
-    key_results = text[1500:2000].strip()
-    conclusion = text[-700:].strip()
+    global_summary = _llm_global_summary(section_summaries)
 
-    return {
-        "title": title,
-        "authors": authors,
-        "abstract": abstract,
-        "problem_statement": problem_statement,
-        "methodology": methodology or "Not available.",
-        "key_results": key_results or "Not available.",
-        "conclusion": conclusion or "Not available.",
+    required = {
+        "title": metadata.get("title", ""),
+        "authors": metadata.get("authors", ""),
+        "abstract": section_summaries.get("abstract", global_summary),
+        "problem_statement": section_summaries.get("introduction", global_summary),
+        "methodology": section_summaries.get("method")
+        or section_summaries.get("methodology")
+        or "",
+        "key_results": section_summaries.get("results")
+        or section_summaries.get("findings")
+        or "",
+        "conclusion": section_summaries.get("conclusion", ""),
+        "overall_summary": global_summary,
+        "section_summaries": section_summaries,
     }
+
+    return required
 
 
 def _llm_summarize_section(sec_name: str, sec_text: str) -> str:
