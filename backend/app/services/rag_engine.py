@@ -1,15 +1,12 @@
 import heapq
 import re
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
 from app.core.config import settings
 from app.services.file_manager import load_summary
 from app.services.vectorstore import _inmem_index
 from app.services.vectorstore import query as vector_query
 from app.utils.cache import rag_query_cache_key, rag_ttl_cache
-
-_answer_cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
-
 
 SECTION_WEIGHTS = {
     "method": 1.2,
@@ -151,7 +148,6 @@ def answer_query(paper_id: str, question: str, top_k: int = 5) -> Dict[str, Any]
             "answer": "No relevant information found in the document.",
             "sources": [],
         }
-        _answer_cache[cache_key] = result
         return result
 
     summary = load_summary(paper_id) or {}
@@ -197,7 +193,6 @@ Answer clearly and concisely:
                 "answer": answer,
                 "sources": [f"{c['section']}:{i}" for i, c in enumerate(top_chunks)],
             }
-            _answer_cache[cache_key] = result
             return result
         except Exception:
             pass
