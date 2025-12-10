@@ -31,3 +31,15 @@ def _heuristic_metadata_from_text(text: str) -> dict:
     authors = lines[1] if len(lines) > 1 else ""
 
     return {"title": title, "authors": authors}
+
+
+def _heuristic_validate_structure(text: str) -> bool:
+    """Check if essential scientific sections exist."""
+
+    lower = text.lower()
+
+    required_sections = ["abstract", "introduction", "method", "result", "conclusion"]
+
+    hits = sum(1 for sec in required_sections if sec in lower)
+
+    return hits >= 3
