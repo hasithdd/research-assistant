@@ -3,6 +3,8 @@ from pathlib import Path
 import fitz
 import pdfplumber
 
+from app.core.config import settings
+
 
 def _extract_with_pdfplumber(file_path: Path) -> str:
     """Extract text using pdfplumber page-by-page."""
@@ -66,3 +68,45 @@ def extract_text_and_metadata(file_path: Path) -> tuple[str, dict]:
     metadata = _heuristic_metadata_from_text(best_text)
 
     return best_text, metadata
+
+
+def _llm_quick_validate(text: str) -> dict:
+    """
+    Ask a small LLM to check whether the required academic sections are present.
+    Returns the same dict schema as heuristic validation.
+    If no OPENAI_API_KEY configured, fallback to heuristic only.
+    """
+    if not settings.OPENAI_API_KEY:
+        return _heuristic_validate_structure(text)
+
+    import openai
+
+    openai.api_key = settings.OPENAI_API_KEY
+
+    prompt = (
+        """
+    Analyze the following research paper text and determine which sections exist.
+    Return ONLY valid JSON with keys:
+    abstract, introduction, methodology, results, conclusion
+    Each value MUST be true or false.
+
+    Text:
+    """
+        + text[:8000]
+        + """
+    """
+    )
+
+    try:
+        resp = openai.ChatCompletion.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=100,
+        )
+        j = resp["choices"][0]["message"]["content"]
+        import json
+
+        return json.loads(j)
+    except Exception:
+        return _heuristic_validate_structure(text)
