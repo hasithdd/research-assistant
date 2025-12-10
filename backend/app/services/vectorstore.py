@@ -1,3 +1,4 @@
+import numpy as np
 from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
 
@@ -60,3 +61,34 @@ def ingest_document(paper_id: str, text: str):
             "chunks": chunks,
             "embeddings": embeddings,
         }
+
+
+def query(paper_id: str, query_text: str, top_k: int = 5) -> list[str]:
+    model = _get_model()
+    q_emb = model.encode([query_text])[0]
+
+    client = get_client()
+    collection = f"paper_{paper_id}"
+
+    if client:
+        try:
+            results = client.search(
+                collection_name=collection, query_vector=q_emb.tolist(), limit=top_k
+            )
+            return [hit.payload["text"] for hit in results]
+        except Exception:
+            pass
+
+    store = globals().get("_inmem_store", {}).get(paper_id)
+    if not store:
+        return []
+
+    embeddings = np.array(store["embeddings"])
+    sims = embeddings.dot(q_emb) / (
+        np.linalg.norm(embeddings, axis=1) * np.linalg.norm(q_emb)
+    )
+
+    top_indices = sims.argsort()[::-1][:top_k]
+    chunks = store["chunks"]
+
+    return [chunks[i] for i in top_indices]
