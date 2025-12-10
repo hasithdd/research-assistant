@@ -171,3 +171,9 @@ def query(paper_id: str, query_text: str, top_k: int = 5) -> List[Dict[str, Any]
         )
 
     return results
+
+
+def preload_embeddings_model() -> None:
+    """Eagerly download and cache the embedding model for startup warmup."""
+
+    _get_model()
