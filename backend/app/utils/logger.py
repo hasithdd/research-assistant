@@ -1,11 +1,11 @@
+import json
 import logging
 import sys
-from pathlib import Path
-from logging.handlers import RotatingFileHandler
-import json
-from datetime import datetime
-from typing import Any, Dict, Optional
 import traceback
+from datetime import datetime
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 # Create logs directory
 LOG_DIR = Path("/app/logs")  # Inside container
@@ -20,31 +20,31 @@ if not logger.handlers:
     console_handler = logging.StreamHandler(sys.stdout)
     console_formatter = logging.Formatter(
         "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
     console_handler.setFormatter(console_formatter)
     console_handler.setLevel(logging.INFO)
     logger.addHandler(console_handler)
-    
+
     # File handler - main application log (rotating)
     app_log_file = LOG_DIR / "app.log"
     app_file_handler = RotatingFileHandler(
         app_log_file,
         maxBytes=10 * 1024 * 1024,  # 10MB
         backupCount=5,
-        encoding="utf-8"
+        encoding="utf-8",
     )
     app_file_handler.setFormatter(console_formatter)
     app_file_handler.setLevel(logging.INFO)
     logger.addHandler(app_file_handler)
-    
+
     # File handler - error log
     error_log_file = LOG_DIR / "error.log"
     error_file_handler = RotatingFileHandler(
         error_log_file,
         maxBytes=10 * 1024 * 1024,  # 10MB
         backupCount=3,
-        encoding="utf-8"
+        encoding="utf-8",
     )
     error_file_handler.setFormatter(console_formatter)
     error_file_handler.setLevel(logging.ERROR)
@@ -67,8 +67,8 @@ def log_llm_call(
     prompt_tokens: int,
     completion_tokens: int,
     success: bool,
-    error: str = None,
-    latency_ms: float = 0.0
+    error: Optional[str] = None,
+    latency_ms: float = 0.0,
 ):
     """Log LLM API calls in structured JSON format."""
     log_entry = {
@@ -82,10 +82,10 @@ def log_llm_call(
         "error": error,
         "latency_ms": latency_ms,
     }
-    
+
     with open(llm_log_file, "a", encoding="utf-8") as f:
         f.write(json.dumps(log_entry) + "\n")
-    
+
     llm_logger.info(
         f"{provider}/{model}: {prompt_tokens + completion_tokens} tokens, "
         f"latency={latency_ms:.0f}ms, success={success}"
@@ -101,7 +101,7 @@ def log_api_request(
     request_body: Optional[Dict[str, Any]] = None,
     response_body: Optional[Dict[str, Any]] = None,
     error: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None,
 ):
     """Log API requests in structured JSON format with detailed context."""
     log_entry = {
@@ -116,11 +116,13 @@ def log_api_request(
         "error": error,
         "metadata": metadata or {},
     }
-    
+
     with open(api_log_file, "a", encoding="utf-8") as f:
         f.write(json.dumps(log_entry) + "\n")
-    
-    level = "ERROR" if status_code >= 500 else "WARNING" if status_code >= 400 else "INFO"
+
+    level = (
+        "ERROR" if status_code >= 500 else "WARNING" if status_code >= 400 else "INFO"
+    )
     getattr(api_logger, level.lower())(
         f"{method} {path} - {status_code} ({latency_ms:.0f}ms) [req_id={request_id}]"
     )
@@ -131,7 +133,7 @@ def log_performance(
     duration_ms: float,
     success: bool,
     metadata: Optional[Dict[str, Any]] = None,
-    error: Optional[str] = None
+    error: Optional[str] = None,
 ):
     """Log performance metrics for critical operations."""
     log_entry = {
@@ -142,10 +144,10 @@ def log_performance(
         "metadata": metadata or {},
         "error": error,
     }
-    
+
     with open(performance_log_file, "a", encoding="utf-8") as f:
         f.write(json.dumps(log_entry) + "\n")
-    
+
     perf_logger.info(
         f"{operation}: {duration_ms:.0f}ms, success={success}"
         + (f", error={error}" if error else "")
@@ -158,19 +160,21 @@ def log_operation_start(operation: str, metadata: Optional[Dict[str, Any]] = Non
     logger.info(f"START: {operation}{meta_str}")
 
 
-def log_operation_end(operation: str, duration_ms: float, metadata: Optional[Dict[str, Any]] = None):
+def log_operation_end(
+    operation: str, duration_ms: float, metadata: Optional[Dict[str, Any]] = None
+):
     """Log the end of a critical operation."""
     meta_str = f" {metadata}" if metadata else ""
     logger.info(f"END: {operation} ({duration_ms:.0f}ms){meta_str}")
 
 
-def log_error_with_trace(operation: str, error: Exception, metadata: Optional[Dict[str, Any]] = None):
+def log_error_with_trace(
+    operation: str, error: Exception, metadata: Optional[Dict[str, Any]] = None
+):
     """Log error with full traceback."""
     trace = traceback.format_exc()
     meta_str = f" | Metadata: {metadata}" if metadata else ""
-    logger.error(
-        f"ERROR in {operation}: {str(error)}{meta_str}\n{trace}"
-    )
+    logger.error(f"ERROR in {operation}: {str(error)}{meta_str}\n{trace}")
 
 
 def log_file_operation(
@@ -178,13 +182,9 @@ def log_file_operation(
     file_path: str,
     success: bool,
     file_size_bytes: Optional[int] = None,
-    error: Optional[str] = None
+    error: Optional[str] = None,
 ):
     """Log file I/O operations."""
-    meta = {
-        "file_path": file_path,
-        "file_size_bytes": file_size_bytes,
-    }
     if error:
         logger.error(f"File {operation} FAILED: {file_path} - {error}")
     else:
@@ -198,7 +198,7 @@ def log_db_operation(
     record_count: Optional[int] = None,
     duration_ms: Optional[float] = None,
     success: bool = True,
-    error: Optional[str] = None
+    error: Optional[str] = None,
 ):
     """Log database/vector store operations."""
     parts = [f"DB {operation}: {collection}"]
@@ -210,5 +210,3 @@ def log_db_operation(
         logger.error(f"{' '.join(parts)} - FAILED: {error}")
     else:
         logger.info(" ".join(parts))
-
-

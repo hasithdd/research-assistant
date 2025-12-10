@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
 import time
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 from qdrant_client import QdrantClient
@@ -11,12 +11,12 @@ from sentence_transformers import SentenceTransformer
 from app.core.config import settings
 from app.utils.chunking import section_aware_chunks, split_to_sections
 from app.utils.logger import (
-    logger,
-    log_performance,
     log_db_operation,
-    log_operation_start,
-    log_operation_end,
     log_error_with_trace,
+    log_operation_end,
+    log_operation_start,
+    log_performance,
+    logger,
 )
 
 _model: Optional[SentenceTransformer] = None
@@ -41,7 +41,7 @@ def _get_model() -> SentenceTransformer:
             "load_embedding_model",
             duration,
             success=True,
-            metadata={"model_name": settings.EMBEDDING_MODEL_NAME}
+            metadata={"model_name": settings.EMBEDDING_MODEL_NAME},
         )
         logger.info(f"Embedding model loaded in {duration:.0f}ms")
     return _model
@@ -61,7 +61,9 @@ def _get_client() -> Optional[QdrantClient]:
             duration = (time.time() - start_time) * 1000
             logger.info(f"Qdrant client connected in {duration:.0f}ms")
         except Exception as e:
-            logger.warning(f"Failed to connect to Qdrant: {e}, using in-memory fallback")
+            logger.warning(
+                f"Failed to connect to Qdrant: {e}, using in-memory fallback"
+            )
             _client = None
     return _client
 
@@ -70,47 +72,94 @@ def ingest_document(
     paper_id: str,
     text: str,
     sections: Optional[Dict[str, str]] = None,
+    section_entities: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """
-    Ingest chunks with section metadata.
-    - Splits text into sections
-    - Creates chunks per section
-    - Embeds chunks
-    - Stores in Qdrant or in-memory fallback
-    """
     overall_start = time.time()
     log_operation_start(
-        "ingest_document",
-        metadata={"paper_id": paper_id, "text_length": len(text)}
+        "ingest_document", metadata={"paper_id": paper_id, "text_length": len(text)}
     )
 
     client = _get_client()
     model = _get_model()
 
-    # Split into sections
     step_start = time.time()
-    if sections is None:
-        sections = split_to_sections(text)
-    sec_chunks = section_aware_chunks(sections)
+    texts: List[str] = []
+    metas: List[Dict[str, Any]] = []
+
+    if sections is not None and len(sections) > 0:
+        logger.info(
+            "Ingesting document %s using %d section summaries", paper_id, len(sections)
+        )
+        for sec_name, sec_text in sections.items():
+            if not isinstance(sec_text, str) or not sec_text.strip():
+                continue
+
+            ents = None
+            if section_entities and isinstance(section_entities, dict):
+                ents = section_entities.get(sec_name)
+
+            entity_str_parts: List[str] = []
+            if isinstance(ents, dict):
+                for k, v in ents.items():
+                    if not isinstance(v, list):
+                        continue
+                    flat_vals = [str(x).strip() for x in v if str(x).strip()]
+                    if flat_vals:
+                        entity_str_parts.append(f"{k}: {', '.join(flat_vals)}")
+
+            entity_block = (
+                "".join(["\nEntities: ", "; ".join(entity_str_parts)])
+                if entity_str_parts
+                else ""
+            )
+
+            chunk_text = (
+                f"Section: {sec_name}\n"
+                f"Summary: {sec_text.strip()}"  # already LLM-compressed
+                f"{entity_block}"
+            )
+
+            texts.append(chunk_text)
+            metas.append(
+                {
+                    "section": sec_name,
+                    "paper_id": paper_id,
+                    "length": len(chunk_text),
+                    "kind": "summary",
+                }
+            )
+    else:
+        if sections is None:
+            sections = split_to_sections(text)
+        sec_chunks = section_aware_chunks(sections)
+
+        logger.info(
+            f"Document chunking for {paper_id}: {len(sec_chunks)} chunks "
+            f"from {len(sections)} sections"
+        )
+
+        texts = [c["text"] for c in sec_chunks]
+        metas = [
+            {
+                "section": c["section"],
+                "paper_id": paper_id,
+                "length": len(c["text"]),
+                "kind": "raw",
+            }
+            for c in sec_chunks
+        ]
+
     step_duration = (time.time() - step_start) * 1000
-    
     logger.info(
-        f"Document chunking for {paper_id}: {len(sec_chunks)} chunks "
-        f"from {len(sections)} sections ({step_duration:.0f}ms)"
+        f"Vectorstore preparation for {paper_id}: {len(texts)} chunks "
+        f"built in {step_duration:.0f}ms"
     )
 
-    texts = [c["text"] for c in sec_chunks]
-    metas = [
-        {"section": c["section"], "paper_id": paper_id, "length": len(c["text"])}
-        for c in sec_chunks
-    ]
-
-    # Generate embeddings
     step_start = time.time()
     embeddings = model.encode(texts, show_progress_bar=False)
     emb_dim = int(embeddings.shape[1])
     step_duration = (time.time() - step_start) * 1000
-    
+
     log_performance(
         "generate_embeddings",
         step_duration,
@@ -119,12 +168,11 @@ def ingest_document(
             "paper_id": paper_id,
             "chunk_count": len(texts),
             "embedding_dim": emb_dim,
-        }
+        },
     )
 
     coll = _collection_name(paper_id)
 
-    # Store in Qdrant if available
     if client:
         try:
             step_start = time.time()
@@ -149,29 +197,31 @@ def ingest_document(
 
             client.upsert(collection_name=coll, points=points)
             step_duration = (time.time() - step_start) * 1000
-            
+
             log_db_operation(
                 "upsert",
                 coll,
                 record_count=len(points),
                 duration_ms=step_duration,
-                success=True
+                success=True,
             )
-            
+
             overall_duration = (time.time() - overall_start) * 1000
             log_operation_end(
                 "ingest_document",
                 overall_duration,
-                metadata={"paper_id": paper_id, "chunks": len(texts), "storage": "qdrant"}
+                metadata={
+                    "paper_id": paper_id,
+                    "chunks": len(texts),
+                    "storage": "qdrant",
+                },
             )
-            
+
             return
 
         except Exception as e:
             log_error_with_trace(
-                "qdrant_upsert",
-                e,
-                metadata={"paper_id": paper_id, "collection": coll}
+                "qdrant_upsert", e, metadata={"paper_id": paper_id, "collection": coll}
             )
             logger.warning(f"Qdrant upsert failed, falling back to in-memory: {e}")
 
@@ -181,19 +231,14 @@ def ingest_document(
         "texts": texts,
         "meta": metas,
     }
-    
-    log_db_operation(
-        "store_inmemory",
-        coll,
-        record_count=len(texts),
-        success=True
-    )
-    
+
+    log_db_operation("store_inmemory", coll, record_count=len(texts), success=True)
+
     overall_duration = (time.time() - overall_start) * 1000
     log_operation_end(
         "ingest_document",
         overall_duration,
-        metadata={"paper_id": paper_id, "chunks": len(texts), "storage": "in-memory"}
+        metadata={"paper_id": paper_id, "chunks": len(texts), "storage": "in-memory"},
     )
 
 
@@ -210,7 +255,11 @@ def query(paper_id: str, query_text: str, top_k: int = 5) -> List[Dict[str, Any]
     start_time = time.time()
     log_operation_start(
         "vectorstore_query",
-        metadata={"paper_id": paper_id, "query_length": len(query_text), "top_k": top_k}
+        metadata={
+            "paper_id": paper_id,
+            "query_length": len(query_text),
+            "top_k": top_k,
+        },
     )
 
     client = _get_client()
@@ -221,12 +270,12 @@ def query(paper_id: str, query_text: str, top_k: int = 5) -> List[Dict[str, Any]
     emb_start = time.time()
     q_emb = model.encode([query_text])[0]
     emb_duration = (time.time() - emb_start) * 1000
-    
+
     log_performance(
         "query_embedding",
         emb_duration,
         success=True,
-        metadata={"query_length": len(query_text)}
+        metadata={"query_length": len(query_text)},
     )
 
     # Try Qdrant first
@@ -239,7 +288,7 @@ def query(paper_id: str, query_text: str, top_k: int = 5) -> List[Dict[str, Any]
                 limit=top_k,
             )
             search_duration = (time.time() - search_start) * 1000
-            
+
             out = []
             for hit in results:
                 payload = hit.payload or {}
@@ -250,15 +299,15 @@ def query(paper_id: str, query_text: str, top_k: int = 5) -> List[Dict[str, Any]
                         "score": float(getattr(hit, "score", 1.0)),
                     }
                 )
-            
+
             log_db_operation(
                 "search",
                 coll,
                 record_count=len(out),
                 duration_ms=search_duration,
-                success=True
+                success=True,
             )
-            
+
             overall_duration = (time.time() - start_time) * 1000
             log_operation_end(
                 "vectorstore_query",
@@ -266,16 +315,14 @@ def query(paper_id: str, query_text: str, top_k: int = 5) -> List[Dict[str, Any]
                 metadata={
                     "paper_id": paper_id,
                     "results_count": len(out),
-                    "storage": "qdrant"
-                }
+                    "storage": "qdrant",
+                },
             )
-            
+
             return out
         except Exception as e:
             log_error_with_trace(
-                "qdrant_search",
-                e,
-                metadata={"paper_id": paper_id, "collection": coll}
+                "qdrant_search", e, metadata={"paper_id": paper_id, "collection": coll}
             )
             logger.warning(f"Qdrant search failed, trying in-memory: {e}")
 
@@ -306,13 +353,13 @@ def query(paper_id: str, query_text: str, top_k: int = 5) -> List[Dict[str, Any]
                 "score": float(sims[i]),
             }
         )
-    
+
     search_duration = (time.time() - search_start) * 1000
     log_performance(
         "inmemory_search",
         search_duration,
         success=True,
-        metadata={"paper_id": paper_id, "results_count": len(results)}
+        metadata={"paper_id": paper_id, "results_count": len(results)},
     )
 
     overall_duration = (time.time() - start_time) * 1000
@@ -322,8 +369,8 @@ def query(paper_id: str, query_text: str, top_k: int = 5) -> List[Dict[str, Any]
         metadata={
             "paper_id": paper_id,
             "results_count": len(results),
-            "storage": "in-memory"
-        }
+            "storage": "in-memory",
+        },
     )
 
     return results

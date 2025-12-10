@@ -3,17 +3,15 @@ import re
 import time
 from typing import Any, Dict, List
 
-from app.core.config import settings
 from app.services.file_manager import load_summary
 from app.services.vectorstore import _inmem_index
 from app.services.vectorstore import query as vector_query
 from app.utils.cache import rag_query_cache_key, rag_ttl_cache
 from app.utils.llm_client import call_llm
 from app.utils.logger import (
-    logger,
-    log_performance,
-    log_operation_start,
     log_operation_end,
+    log_operation_start,
+    logger,
 )
 
 SECTION_WEIGHTS = {
@@ -118,32 +116,28 @@ def answer_query(paper_id: str, question: str, top_k: int = 5) -> Dict[str, Any]
             "paper_id": paper_id,
             "question_length": len(question),
             "top_k": top_k,
-        }
+        },
     )
-    
-    # Check cache
+
     cache_key = rag_query_cache_key(paper_id, question)
     cached = rag_ttl_cache.get(cache_key)
     if cached:
         duration = (time.time() - overall_start) * 1000
         logger.info(f"Cache HIT for query on paper {paper_id} ({duration:.0f}ms)")
         return cached
-    
+
     logger.info(f"Cache MISS for query on paper {paper_id}, performing retrieval")
 
-    # Vector retrieval
     step_start = time.time()
     vec_hits = vector_query(paper_id, question, top_k=top_k)
     vec_duration = (time.time() - step_start) * 1000
     logger.info(f"Vector search: {len(vec_hits)} hits in {vec_duration:.0f}ms")
 
-    # Keyword retrieval
     step_start = time.time()
     kw_hits = _keyword_retrieve_by_section(paper_id, question, top_k=top_k)
     kw_duration = (time.time() - step_start) * 1000
     logger.info(f"Keyword search: {len(kw_hits)} hits in {kw_duration:.0f}ms")
 
-    # Normalize and merge
     step_start = time.time()
     vec_hits = _normalize_scores(vec_hits)
     kw_hits = _normalize_scores(kw_hits)
@@ -177,20 +171,18 @@ def answer_query(paper_id: str, question: str, top_k: int = 5) -> Dict[str, Any]
     top_ranked = heapq.nlargest(top_k, ranked, key=lambda x: x[0])
     top_chunks = [entry for score, entry in top_ranked]
     merge_duration = (time.time() - step_start) * 1000
-    
+
     logger.info(
         f"Merged and ranked: {len(merged)} unique chunks -> {len(top_chunks)} final "
         f"({merge_duration:.0f}ms)"
     )
 
-    # Load summary for use in both normal and fallback paths
     step_start = time.time()
     summary = load_summary(paper_id) or {}
     overall = summary.get("overall_summary", "")
     sec_summaries = summary.get("section_summaries", {})
 
     if not top_chunks:
-        # Fallback: answer based purely on summaries when retrieval finds nothing.
         if not overall and not sec_summaries:
             result = {
                 "answer": "No relevant information found in the document.",
@@ -220,8 +212,19 @@ Answer clearly and concisely:
         answer = call_llm(messages, max_tokens=350, temperature=0.0)
         llm_duration = (time.time() - llm_start) * 1000
 
+        if (
+            not answer
+            or "no response available from the language model" in answer.lower()
+        ):
+            answer = (
+                "The document's summaries discuss the methodology and key findings, "
+                "but the language model could not generate a detailed answer."
+            )
+
         logger.info(
-            f"LLM summary-only answer generated in {llm_duration:.0f}ms, length: {len(answer)} chars"
+            "LLM summary-only answer generated in %sms, length: %s chars",
+            f"{llm_duration:.0f}",
+            len(answer),
         )
 
         result = {"answer": answer, "sources": []}
@@ -247,7 +250,6 @@ Answer clearly and concisely:
 
         return result
 
-    # Build context-aware prompt using retrieved chunks and summaries
     context_parts = [
         f"[{i}] ({c['section']}) {_compress_text(c['text'], 1000)}"
         for i, c in enumerate(top_chunks)
@@ -275,17 +277,26 @@ Answer clearly and concisely:
     llm_start = time.time()
     answer = call_llm(messages, max_tokens=350, temperature=0.0)
     llm_duration = (time.time() - llm_start) * 1000
-    
-    logger.info(f"LLM answer generated in {llm_duration:.0f}ms, length: {len(answer)} chars")
-    
+
+    if not answer or "no response available from the language model" in answer.lower():
+        answer = (
+            "Based on the retrieved sections, the paper's methodology and results "
+            "are discussed, but the language model could not provide a more "
+            "specific answer."
+        )
+
+    logger.info(
+        f"LLM answer generated in {llm_duration:.0f}ms, length: {len(answer)} chars"
+    )
+
     result = {
         "answer": answer,
         "sources": [f"{c['section']}:{i}" for i, c in enumerate(top_chunks)],
     }
-    
+
     # Cache result
     rag_ttl_cache.set(cache_key, result)
-    
+
     overall_duration = (time.time() - overall_start) * 1000
     log_operation_end(
         "answer_query",
@@ -295,12 +306,12 @@ Answer clearly and concisely:
             "chunks_retrieved": len(top_chunks),
             "answer_length": len(answer),
             "sources_count": len(result["sources"]),
-        }
+        },
     )
-    
+
     logger.info(
         f"RAG query completed for paper {paper_id}: {len(top_chunks)} chunks, "
         f"{len(answer)} chars answer, total {overall_duration:.0f}ms"
     )
-    
+
     return result

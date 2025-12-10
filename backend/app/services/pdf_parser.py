@@ -1,6 +1,6 @@
+import time
 from io import BytesIO
 from pathlib import Path
-import time
 
 import fitz
 import pdfplumber
@@ -8,7 +8,12 @@ import pytesseract
 from PIL import Image
 
 from app.core.config import settings
-from app.utils.logger import logger, log_performance, log_operation_start, log_operation_end
+from app.utils.logger import (
+    log_operation_end,
+    log_operation_start,
+    log_performance,
+    logger,
+)
 
 
 def _extract_with_pdfplumber(file_path: Path) -> str:
@@ -20,10 +25,10 @@ def _extract_with_pdfplumber(file_path: Path) -> str:
         for page in pdf.pages:
             text = page.extract_text() or ""
             pages.append(text)
-    
+
     result = "\n".join(pages)
     duration = (time.time() - start_time) * 1000
-    
+
     log_performance(
         "_extract_with_pdfplumber",
         duration,
@@ -32,10 +37,29 @@ def _extract_with_pdfplumber(file_path: Path) -> str:
             "file_path": str(file_path),
             "pages": page_count,
             "text_length": len(result),
-        }
+        },
     )
-    
+
     return result
+
+
+def extract_pages(file_path: Path) -> list[str]:
+    """Extract text page-by-page using pdfplumber.
+
+    This is a lightweight helper for higher-level LLM logic that
+    needs page granularity (e.g., page-wise summaries and section
+    assignment). It is intentionally simple and does not perform
+    any validation beyond returning one string per page.
+    """
+    texts: list[str] = []
+    try:
+        with pdfplumber.open(file_path) as pdf:
+            for page in pdf.pages:
+                texts.append((page.extract_text() or "").strip())
+        logger.info("extract_pages: extracted %d pages from %s", len(texts), file_path)
+    except Exception as e:
+        logger.warning("extract_pages failed for %s: %s", file_path, e)
+    return texts
 
 
 def _extract_with_pymupdf(file_path: Path) -> str:
@@ -46,10 +70,10 @@ def _extract_with_pymupdf(file_path: Path) -> str:
     page_count = len(doc)
     for page in doc:
         texts.append(page.get_text("text") or "")
-    
+
     result = "\n".join(texts)
     duration = (time.time() - start_time) * 1000
-    
+
     log_performance(
         "_extract_with_pymupdf",
         duration,
@@ -58,9 +82,9 @@ def _extract_with_pymupdf(file_path: Path) -> str:
             "file_path": str(file_path),
             "pages": page_count,
             "text_length": len(result),
-        }
+        },
     )
-    
+
     return result
 
 
@@ -95,7 +119,9 @@ def extract_text_and_metadata(file_path: Path) -> tuple[str, dict]:
     - If invalid → OCR fallback → LLM validate
     """
     overall_start = time.time()
-    log_operation_start("extract_text_and_metadata", metadata={"file_path": str(file_path)})
+    log_operation_start(
+        "extract_text_and_metadata", metadata={"file_path": str(file_path)}
+    )
 
     t1 = _extract_with_pdfplumber(file_path)
     t2 = _extract_with_pymupdf(file_path)
@@ -134,7 +160,7 @@ def extract_text_and_metadata(file_path: Path) -> tuple[str, dict]:
         logger.info("OCR fallback succeeded")
 
     metadata = _heuristic_metadata_from_text(best)
-    
+
     overall_duration = (time.time() - overall_start) * 1000
     log_operation_end(
         "extract_text_and_metadata",
@@ -144,9 +170,9 @@ def extract_text_and_metadata(file_path: Path) -> tuple[str, dict]:
             "text_length": len(best),
             "valid_sections": sum(combined.values()),
             "title": metadata.get("title", "")[:100],
-        }
+        },
     )
-    
+
     return best, metadata
 
 
@@ -196,7 +222,7 @@ def _ocr_fallback(file_path: Path) -> str:
     """Convert pages to images and OCR them."""
     start_time = time.time()
     logger.info(f"Starting OCR fallback for {file_path}")
-    
+
     doc = fitz.open(file_path)
     ocr_texts = []
     page_count = len(doc)
@@ -207,13 +233,13 @@ def _ocr_fallback(file_path: Path) -> str:
         image = Image.open(BytesIO(img_bytes))
         text = pytesseract.image_to_string(image)
         ocr_texts.append(text)
-        
-        if page_num % 5 == 0:  # Log progress every 5 pages
+
+        if page_num % 5 == 0:
             logger.info(f"OCR progress: {page_num + 1}/{page_count} pages")
 
     result = "\n".join(ocr_texts).strip()
     duration = (time.time() - start_time) * 1000
-    
+
     log_performance(
         "_ocr_fallback",
         duration,
@@ -222,9 +248,11 @@ def _ocr_fallback(file_path: Path) -> str:
             "file_path": str(file_path),
             "pages": page_count,
             "text_length": len(result),
-        }
+        },
     )
-    
-    logger.info(f"OCR completed: {page_count} pages, {len(result)} chars in {duration:.0f}ms")
-    
+
+    logger.info(
+        f"OCR completed: {page_count} pages, {len(result)} chars in {duration:.0f}ms"
+    )
+
     return result
