@@ -1,5 +1,6 @@
 from app.services.summarizer import generate_structured_summary
 
+
 def test_hierarchical_summary_basic():
     text = """
     ABSTRACT
