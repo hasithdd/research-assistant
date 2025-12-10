@@ -1,5 +1,6 @@
 from app.services.vectorstore import ingest_document, query
 
+
 def test_vectorstore_fallback():
     text = "This is a test document about machine learning and embeddings"
     ingest_document("test", text)
