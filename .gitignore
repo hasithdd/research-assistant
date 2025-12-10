@@ -15,4 +15,9 @@ frontend/.vite/
 frontend/coverage/
 frontend/.eslintcache
 frontend/.turbo
+frontend/.DS_Store
+frontend/npm-debug.log*
+frontend/yarn-error.log*
+frontend/.env.local
+frontend/.env.*.local
 
