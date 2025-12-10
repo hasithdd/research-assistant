@@ -1,94 +1,173 @@
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
 import numpy as np
 from qdrant_client import QdrantClient
+from qdrant_client.http import models as rest
 from sentence_transformers import SentenceTransformer
 
-_model = None
-_client = None
+from app.core.config import settings
+from app.utils.chunking import section_aware_chunks, split_to_sections
+
+_model: Optional[SentenceTransformer] = None
+_client: Optional[QdrantClient] = None
+
+_inmem_index: Dict[str, Dict[str, Any]] = {}
+
+
+def _collection_name(paper_id: str) -> str:
+    return f"paper_{paper_id}"
 
 
 def _get_model() -> SentenceTransformer:
+    """Load embedding model lazily."""
     global _model
     if _model is None:
-        _model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+        _model = SentenceTransformer(settings.EMBEDDING_MODEL_NAME)
     return _model
 
 
-def get_client() -> QdrantClient | None:
+def _get_client() -> Optional[QdrantClient]:
+    """Return Qdrant client if available; otherwise None."""
     global _client
     if _client is None:
         try:
-            _client = QdrantClient(url="http://localhost:6333")
+            _client = QdrantClient(
+                url=settings.QDRANT_URL,
+                api_key=settings.QDRANT_API_KEY,
+            )
         except Exception:
             _client = None
     return _client
 
 
-def _basic_chunk(text: str, chunk_size: int = 500) -> list[str]:
-    words = text.split()
-    chunks = []
-    for i in range(0, len(words), chunk_size):
-        chunk = " ".join(words[i : i + chunk_size])
-        chunks.append(chunk)
-    return chunks
+def ingest_document(
+    paper_id: str,
+    text: str,
+    sections: Optional[Dict[str, str]] = None,
+) -> None:
+    """
+    Ingest chunks with section metadata.
+    - Splits text into sections
+    - Creates chunks per section
+    - Embeds chunks
+    - Stores in Qdrant or in-memory fallback
+    """
 
-
-def ingest_document(paper_id: str, text: str):
-    client = get_client()
+    client = _get_client()
     model = _get_model()
 
-    chunks = _basic_chunk(text)
-    embeddings = model.encode(chunks)
+    if sections is None:
+        sections = split_to_sections(text)
 
-    collection = f"paper_{paper_id}"
+    sec_chunks = section_aware_chunks(sections)
+    texts = [c["text"] for c in sec_chunks]
+    metas = [
+        {"section": c["section"], "paper_id": paper_id, "length": len(c["text"])}
+        for c in sec_chunks
+    ]
+
+    embeddings = model.encode(texts, show_progress_bar=False)
+    emb_dim = int(embeddings.shape[1])
+
+    coll = _collection_name(paper_id)
 
     if client:
-        client.recreate_collection(
-            collection_name=collection,
-            vectors_config={"size": len(embeddings[0]), "distance": "Cosine"},
-        )
+        try:
+            client.recreate_collection(
+                collection_name=coll,
+                vectors_config=rest.VectorParams(
+                    size=emb_dim,
+                    distance=rest.Distance.COSINE,
+                ),
+            )
 
-        points = []
-        for i, (chunk, emb) in enumerate(zip(chunks, embeddings)):
-            points.append({"id": i, "vector": emb.tolist(), "payload": {"text": chunk}})
+            points = []
+            for idx, (vec, txt, meta) in enumerate(zip(embeddings, texts, metas)):
+                payload = {"text": txt, **meta}
+                points.append(
+                    rest.PointStruct(
+                        id=idx,
+                        vector=vec.tolist(),
+                        payload=payload,
+                    )
+                )
 
-        client.upsert(collection_name=collection, points=points)
+            client.upsert(collection_name=coll, points=points)
+            return
 
-    else:
-        global _inmem_store
-        if "_inmem_store" not in globals():
-            globals()["_inmem_store"] = {}
-        globals()["_inmem_store"][paper_id] = {
-            "chunks": chunks,
-            "embeddings": embeddings,
+        except Exception:
+            pass
+
+    _inmem_index[coll] = {
+        "embs": np.array(embeddings),
+        "texts": texts,
+        "meta": metas,
+    }
+
+
+def query(paper_id: str, query_text: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    """
+    Section-aware semantic search.
+    Returns list of:
+        {
+            "text": str,
+            "section": str,
+            "score": float
         }
+    """
 
-
-def query(paper_id: str, query_text: str, top_k: int = 5) -> list[str]:
+    client = _get_client()
     model = _get_model()
-    q_emb = model.encode([query_text])[0]
+    coll = _collection_name(paper_id)
 
-    client = get_client()
-    collection = f"paper_{paper_id}"
+    q_emb = model.encode([query_text])[0]
 
     if client:
         try:
             results = client.search(
-                collection_name=collection, query_vector=q_emb.tolist(), limit=top_k
+                collection_name=coll,
+                query_vector=q_emb.tolist(),
+                limit=top_k,
             )
-            return [hit.payload["text"] for hit in results]
+            out = []
+            for hit in results:
+                payload = hit.payload or {}
+                out.append(
+                    {
+                        "text": payload.get("text", ""),
+                        "section": payload.get("section", "unknown"),
+                        "score": float(getattr(hit, "score", 1.0)),
+                    }
+                )
+            return out
         except Exception:
             pass
 
-    store = globals().get("_inmem_store", {}).get(paper_id)
-    if not store:
+    if coll not in _inmem_index:
         return []
 
-    embeddings = np.array(store["embeddings"])
-    sims = embeddings.dot(q_emb) / (
-        np.linalg.norm(embeddings, axis=1) * np.linalg.norm(q_emb)
-    )
+    idx_data = _inmem_index[coll]
+    embs = idx_data["embs"]
+    texts = idx_data["texts"]
+    metas = idx_data["meta"]
 
-    top_indices = sims.argsort()[::-1][:top_k]
-    chunks = store["chunks"]
+    q_norm = q_emb / np.linalg.norm(q_emb)
+    emb_norm = embs / np.linalg.norm(embs, axis=1, keepdims=True)
 
-    return [chunks[i] for i in top_indices]
+    sims = emb_norm @ q_norm
+    top_idx = sims.argsort()[::-1][:top_k]
+
+    results = []
+    for i in top_idx:
+        meta = metas[i]
+        results.append(
+            {
+                "text": texts[i],
+                "section": meta.get("section", "unknown"),
+                "score": float(sims[i]),
+            }
+        )
+
+    return results
