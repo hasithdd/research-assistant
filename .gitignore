@@ -8,3 +8,11 @@ venv/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+frontend/.eslintcache
+frontend/.turbo
+
