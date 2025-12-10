@@ -110,15 +110,12 @@ def ingest_document(
 def query(paper_id: str, query_text: str, top_k: int = 5) -> List[Dict[str, Any]]:
     """
     Section-aware semantic search.
-    Returns:
-        [
-            {
-                "text": str,
-                "section": str,
-                "score": float
-            },
-            ...
-        ]
+    Returns list of:
+        {
+            "text": str,
+            "section": str,
+            "score": float
+        }
     """
 
     client = _get_client()
@@ -134,7 +131,6 @@ def query(paper_id: str, query_text: str, top_k: int = 5) -> List[Dict[str, Any]
                 query_vector=q_emb.tolist(),
                 limit=top_k,
             )
-
             out = []
             for hit in results:
                 payload = hit.payload or {}
@@ -146,7 +142,6 @@ def query(paper_id: str, query_text: str, top_k: int = 5) -> List[Dict[str, Any]
                     }
                 )
             return out
-
         except Exception:
             pass
 
@@ -166,11 +161,11 @@ def query(paper_id: str, query_text: str, top_k: int = 5) -> List[Dict[str, Any]
 
     results = []
     for i in top_idx:
-        section = metas[i].get("section", "unknown")
+        meta = metas[i]
         results.append(
             {
                 "text": texts[i],
-                "section": section,
+                "section": meta.get("section", "unknown"),
                 "score": float(sims[i]),
             }
         )
