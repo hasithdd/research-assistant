@@ -6,7 +6,7 @@ from app.core.config import settings
 from app.services.file_manager import load_summary
 from app.services.vectorstore import _inmem_index
 from app.services.vectorstore import query as vector_query
-from app.utils.cache import rag_query_cache_key
+from app.utils.cache import rag_query_cache_key, rag_ttl_cache
 
 _answer_cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
@@ -107,8 +107,9 @@ def _section_boost(section: str, question: str) -> float:
 
 def answer_query(paper_id: str, question: str, top_k: int = 5) -> Dict[str, Any]:
     cache_key = rag_query_cache_key(paper_id, question)
-    if cache_key in _answer_cache:
-        return _answer_cache[cache_key]
+    cached = rag_ttl_cache.get(cache_key)
+    if cached:
+        return cached
 
     vec_hits = vector_query(paper_id, question, top_k=top_k)
     kw_hits = _keyword_retrieve_by_section(paper_id, question, top_k=top_k)
@@ -207,5 +208,5 @@ Answer clearly and concisely:
         "sources": [f"{c['section']}:{i}" for i, c in enumerate(top_chunks)],
     }
 
-    _answer_cache[cache_key] = result
+    rag_ttl_cache.set(cache_key, result)
     return result

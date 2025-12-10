@@ -1,5 +1,7 @@
 import asyncio
-from app.services.vectorstore import query as sync_query, ingest_document as sync_ingest
+
+from app.services.vectorstore import ingest_document as sync_ingest
+from app.services.vectorstore import query as sync_query
 
 
 async def ingest_document_async(*args, **kwargs):
