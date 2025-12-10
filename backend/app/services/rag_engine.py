@@ -1,6 +1,6 @@
 import heapq
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from app.core.config import settings
 from app.services.file_manager import load_summary
@@ -10,6 +10,10 @@ from app.services.vectorstore import (
 from app.services.vectorstore import (
     query as vector_query,
 )
+from app.utils.cache import rag_query_cache_key
+
+_answer_cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
 
 SECTION_WEIGHTS = {
     "method": 1.2,
@@ -90,8 +94,12 @@ def answer_query(paper_id: str, question: str, top_k: int = 5) -> Dict[str, Any]
     4. Build LLM prompt with summaries and chunks
     5. Generate LLM final answer OR fallback to excerpts
     """
-    vec_hits = vector_query(paper_id, question, top_k=top_k)
 
+    cache_key = rag_query_cache_key(paper_id, question)
+    if cache_key in _answer_cache:
+        return _answer_cache[cache_key]
+
+    vec_hits = vector_query(paper_id, question, top_k=top_k)
     kw_hits = _keyword_retrieve_by_section(paper_id, question, top_k=top_k)
 
     merged: Dict[str, Dict[str, Any]] = {}
@@ -124,10 +132,12 @@ def answer_query(paper_id: str, question: str, top_k: int = 5) -> Dict[str, Any]
     top_chunks = [entry for score, entry in top_ranked]
 
     if not top_chunks:
-        return {
+        result = {
             "answer": "No relevant information found in the document.",
             "sources": [],
         }
+        _answer_cache[cache_key] = result
+        return result
 
     summary = load_summary(paper_id) or {}
     overall = summary.get("overall_summary", "")
@@ -167,15 +177,21 @@ Answer clearly and concisely:
                 temperature=0.0,
             )
             answer = resp["choices"][0]["message"]["content"].strip()
-            return {
+
+            result = {
                 "answer": answer,
                 "sources": [f"{c['section']}:{i}" for i, c in enumerate(top_chunks)],
             }
+            _answer_cache[cache_key] = result
+            return result
+
         except Exception:
             pass
 
     combined = " ".join([c["text"][:500] for c in top_chunks])
-    return {
+    result = {
         "answer": f"Relevant excerpts: {combined}",
         "sources": [f"{c['section']}:{i}" for i, c in enumerate(top_chunks)],
     }
+    _answer_cache[cache_key] = result
+    return result
