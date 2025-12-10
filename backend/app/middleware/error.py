@@ -1,3 +1,4 @@
+import time
 import traceback
 import uuid
 
@@ -8,12 +9,11 @@ from fastapi.responses import JSONResponse
 
 async def exception_middleware(request: Request, call_next):
     req_id = str(uuid.uuid4())
+    start = time.time()
     request.state.req_id = req_id
 
     try:
         response = await call_next(request)
-        return response
-
     except Exception as exc:
         logger.error(
             "Unhandled Exception",
@@ -25,7 +25,7 @@ async def exception_middleware(request: Request, call_next):
                 "trace": traceback.format_exc(),
             },
         )
-        return JSONResponse(
+        response = JSONResponse(
             status_code=500,
             content={
                 "error": "Internal server error",
@@ -33,3 +33,16 @@ async def exception_middleware(request: Request, call_next):
                 "request_id": req_id,
             },
         )
+    finally:
+        duration = round((time.time() - start) * 1000, 2)
+        logger.info(
+            "Request completed",
+            extra={
+                "path": request.url.path,
+                "method": request.method,
+                "ms": duration,
+                "request_id": req_id,
+            },
+        )
+
+    return response
