@@ -37,3 +37,29 @@ def split_to_sections(text: str) -> dict:
     return {
         sec: "\n".join(content).strip() for sec, content in sections.items() if content
     }
+
+
+def chunk_text_semantic(text: str, chunk_size: int = 500, overlap: int = 100):
+    """Simple semantic-like chunker based on sentence boundaries."""
+    import re
+
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+
+    chunks = []
+    cur = []
+    cur_len = 0
+
+    for s in sentences:
+        words = s.split()
+        cur.append(s)
+        cur_len += len(words)
+
+        if cur_len >= chunk_size:
+            chunks.append(" ".join(cur))
+            cur = cur[-(overlap // 10) :]
+            cur_len = sum(len(x.split()) for x in cur)
+
+    if cur:
+        chunks.append(" ".join(cur))
+
+    return chunks
