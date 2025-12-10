@@ -8,3 +8,16 @@ venv/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+frontend/.eslintcache
+frontend/.turbo
+frontend/.DS_Store
+frontend/npm-debug.log*
+frontend/yarn-error.log*
+frontend/.env.local
+frontend/.env.*.local
+
