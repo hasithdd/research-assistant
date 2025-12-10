@@ -29,12 +29,10 @@ def _extract_with_pymupdf(file_path: Path) -> str:
 
 
 def _heuristic_metadata_from_text(text: str) -> dict:
-    """Guess title and authors from the first lines of the PDF."""
+    """Extract title (first non-empty line) and authors (second)."""
     lines = [l.strip() for l in text.splitlines() if l.strip()]
-
-    title = lines[0] if len(lines) > 0 else ""
+    title = lines[0] if lines else ""
     authors = lines[1] if len(lines) > 1 else ""
-
     return {"title": title, "authors": authors}
 
 
