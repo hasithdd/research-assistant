@@ -1,7 +1,7 @@
 import pytest
 from reportlab.pdfgen import canvas
 
-from backend.tests.mocks import mock_chatcompletion_create
+from .mocks import mock_chatcompletion_create
 
 
 @pytest.fixture(scope="session")
