@@ -1,10 +1,15 @@
 import heapq
 import re
+from typing import Any, Dict, List
 
 from app.core.config import settings
 from app.services.file_manager import load_summary
-from app.services.vectorstore import _inmem_index
-from app.services.vectorstore import query as vector_query
+from app.services.vectorstore import (
+    _inmem_index,
+)
+from app.services.vectorstore import (
+    query as vector_query,
+)
 
 SECTION_WEIGHTS = {
     "method": 1.2,
@@ -22,10 +27,11 @@ SECTION_WEIGHTS = {
 
 def _keyword_retrieve_by_section(
     paper_id: str, query: str, top_k: int = 5
-) -> list[dict]:
+) -> List[Dict[str, Any]]:
     """
-    Keyword retriever: returns [{"text":..., "section":..., "score":...}]
-    Uses in-memory vectorstore if present, otherwise abstract summary fallback.
+    Naive keyword retriever returning:
+        [{"text":..., "section":..., "score":...}]
+    Uses in-memory vectorstore if available; else abstracts in summary.
     """
     coll = f"paper_{paper_id}"
 
@@ -35,91 +41,101 @@ def _keyword_retrieve_by_section(
     else:
         summary = load_summary(paper_id) or {}
         abstract = summary.get("abstract", "")
-        if not abstract:
+        if not abstract.strip():
             return []
 
         texts = [p.strip() for p in abstract.split("\n\n") if len(p.strip()) > 20]
         metas = [{"section": "abstract"} for _ in texts]
 
-    q_toks = set(re.findall(r"\w+", query.lower()))
+    q_tokens = set(re.findall(r"\w+", query.lower()))
     scored = []
 
-    for text, meta in zip(texts, metas):
-        t_toks = set(re.findall(r"\w+", text.lower()))
-        overlap = len(q_toks & t_toks)
-        if overlap > 0:
-            scored.append((overlap, text, meta.get("section", "unknown")))
+    for txt, meta in zip(texts, metas):
+        t_tokens = set(re.findall(r"\w+", txt.lower()))
+        intersection = q_tokens & t_tokens
+        if intersection:
+            scored.append((len(intersection), txt, meta.get("section", "unknown")))
 
     scored.sort(key=lambda x: x[0], reverse=True)
 
-    out = []
-    for score, text, section in scored[:top_k]:
-        out.append({"text": text, "section": section, "score": float(score)})
-
-    return out
+    return [
+        {"text": text, "section": section, "score": float(score)}
+        for score, text, section in scored[:top_k]
+    ]
 
 
 def _section_boost(section: str, question: str) -> float:
     sec = section.lower()
-    w = SECTION_WEIGHTS.get(sec, 1.0)
+    weight = SECTION_WEIGHTS.get(sec, 1.0)
 
     q = question.lower()
 
-    if any(k in q for k in ["method", "approach", "dataset", "experiment"]) and sec in (
-        "method",
-        "methodology",
-        "experiments",
-    ):
-        w += 0.25
+    if any(word in q for word in ["method", "approach", "dataset", "experiment"]):
+        if sec in ("method", "methodology", "experiments"):
+            weight += 0.25
 
-    if any(
-        k in q for k in ["result", "finding", "accuracy", "performance"]
-    ) and sec in ("results", "findings"):
-        w += 0.25
+    if any(word in q for word in ["result", "finding", "accuracy", "performance"]):
+        if sec in ("results", "findings"):
+            weight += 0.25
 
-    return w
+    return weight
 
 
-def answer_query(paper_id: str, question: str, top_k: int = 5) -> dict:
+def answer_query(paper_id: str, question: str, top_k: int = 5) -> Dict[str, Any]:
+    """
+    Hybrid RAG Pipeline:
+    1. Vector retrieval (semantic)
+    2. Keyword fallback retrieval
+    3. Merge results & apply section-based re-ranking
+    4. Build LLM prompt with summaries and chunks
+    5. Generate LLM final answer OR fallback to excerpts
+    """
     vec_hits = vector_query(paper_id, question, top_k=top_k)
 
     kw_hits = _keyword_retrieve_by_section(paper_id, question, top_k=top_k)
 
-    merged: dict[str, dict] = {}
+    merged: Dict[str, Dict[str, Any]] = {}
 
-    for h in vec_hits:
-        text = h["text"].strip()
-        merged[text] = {"text": text, "section": h["section"], "score": h["score"]}
+    for hit in vec_hits:
+        text = hit["text"].strip()
+        merged[text] = {
+            "text": text,
+            "section": hit.get("section", "unknown"),
+            "score": float(hit.get("score", 1.0)),
+        }
 
-    for h in kw_hits:
-        text = h["text"].strip()
+    for hit in kw_hits:
+        text = hit["text"].strip()
         if text in merged:
-            merged[text]["score"] = max(merged[text]["score"], h["score"] + 0.01)
+            merged[text]["score"] = max(merged[text]["score"], hit["score"] + 0.01)
         else:
-            merged[text] = {"text": text, "section": h["section"], "score": h["score"]}
+            merged[text] = {
+                "text": text,
+                "section": hit.get("section", "unknown"),
+                "score": float(hit["score"]),
+            }
 
     ranked = []
     for entry in merged.values():
-        boosted = entry["score"] * _section_boost(entry["section"], question)
-        ranked.append((boosted, entry))
+        boosted_score = entry["score"] * _section_boost(entry["section"], question)
+        ranked.append((boosted_score, entry))
 
-    ranked_top = heapq.nlargest(top_k, ranked, key=lambda x: x[0])
-    top_chunks = [entry for score, entry in ranked_top]
+    top_ranked = heapq.nlargest(top_k, ranked, key=lambda x: x[0])
+    top_chunks = [entry for score, entry in top_ranked]
 
     if not top_chunks:
         return {
-            "answer": "The paper does not contain relevant information.",
+            "answer": "No relevant information found in the document.",
             "sources": [],
         }
 
     summary = load_summary(paper_id) or {}
     overall = summary.get("overall_summary", "")
-    section_sums = summary.get("section_summaries", {})
+    sec_summaries = summary.get("section_summaries", {})
 
-    context_parts = []
-    for i, c in enumerate(top_chunks):
-        context_parts.append(f"[{i}] ({c['section']}) {c['text'][:1000]}")
-
+    context_parts = [
+        f"[{i}] ({c['section']}) {c['text'][:1000]}" for i, c in enumerate(top_chunks)
+    ]
     context = "\n\n".join(context_parts)
 
     prompt = f"""
@@ -129,7 +145,7 @@ Overall summary:
 {overall}
 
 Section summaries:
-{section_sums}
+{sec_summaries}
 
 Context:
 {context}
@@ -144,14 +160,13 @@ Answer clearly and concisely:
             import openai
 
             openai.api_key = settings.OPENAI_API_KEY
-
             resp = openai.ChatCompletion.create(
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=300,
+                max_tokens=350,
                 temperature=0.0,
             )
-            answer = resp["choices"][0]["message"]["content"]
+            answer = resp["choices"][0]["message"]["content"].strip()
             return {
                 "answer": answer,
                 "sources": [f"{c['section']}:{i}" for i, c in enumerate(top_chunks)],
