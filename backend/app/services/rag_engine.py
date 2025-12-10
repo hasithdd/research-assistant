@@ -46,7 +46,7 @@ def answer_query(paper_id: str, question: str) -> dict:
             "sources": [],
         }
 
-    combined = " ".join(chunks)
+    combined = " ".join([c["text"] for c in chunks])
     snippet = combined[:500].strip()
 
     return {
