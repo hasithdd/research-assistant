@@ -9,6 +9,7 @@ from app.services.file_manager import (
     save_summary,
 )
 from app.services.pdf_parser import extract_text_and_metadata
+from app.services.summarizer import generate_structured_summary
 
 router = APIRouter()
 
@@ -27,16 +28,7 @@ async def upload_pdf(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e))
 
-    summary = {
-        "title": metadata["title"],
-        "authors": metadata["authors"],
-        "abstract": "Not yet generated",
-        "problem_statement": "Not yet generated",
-        "methodology": "Not yet generated",
-        "key_results": "Not yet generated",
-        "conclusion": "Not yet generated",
-    }
-
+    summary = generate_structured_summary(text, metadata)
     save_summary(folder, summary)
 
     return UploadResponse(paper_id=paper_id, summary=summary)
