@@ -10,6 +10,7 @@ from app.services.file_manager import (
 )
 from app.services.pdf_parser import extract_text_and_metadata
 from app.services.summarizer import generate_structured_summary
+from app.services.vectorstore import ingest_document
 
 router = APIRouter()
 
@@ -27,6 +28,8 @@ async def upload_pdf(file: UploadFile = File(...)):
         text, metadata = extract_text_and_metadata(pdf_path)
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e))
+
+    ingest_document(paper_id, text)
 
     summary = generate_structured_summary(text, metadata)
     save_summary(folder, summary)
