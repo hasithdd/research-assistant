@@ -38,11 +38,34 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const { paper_id, summary } = await uploadPdfApi(file);
       const url = URL.createObjectURL(file);
+      const formatAuthors = (authors: Summary['authors']) => {
+        if (!authors) return undefined;
+        if (Array.isArray(authors)) return authors.join(', ');
+        if (typeof authors === 'string') return authors;
+        return String(authors);
+      };
+      const initialSummaryMessage = summary
+        ? {
+            id: randomId(),
+            role: 'assistant' as const,
+            text: [
+              'Here is a structured summary of this paper:',
+              summary.title ? `Title: ${summary.title}` : undefined,
+              formatAuthors(summary.authors) ? `Authors: ${formatAuthors(summary.authors)}` : undefined,
+              summary.abstract ? `Abstract: ${summary.abstract}` : undefined,
+              summary.key_results ? `Key results: ${summary.key_results}` : undefined,
+              summary.conclusion ? `Conclusion: ${summary.conclusion}` : undefined
+            ]
+              .filter(Boolean)
+              .join('\n\n')
+          }
+        : null;
+
       set({
         currentPaperId: paper_id,
         pdfUrl: url,
         summary,
-        messages: [],
+        messages: initialSummaryMessage ? [initialSummaryMessage] : [],
         error: null
       });
       return paper_id;
@@ -59,7 +82,40 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ isLoadingSummary: true, error: null });
     try {
       const data = await getSummary(paperId);
-      set({ summary: data });
+      set((state) => {
+        if (!data) return { summary: data };
+
+        if (state.messages.length > 0) {
+          return { summary: data };
+        }
+
+        const formatAuthors = (authors: Summary['authors']) => {
+          if (!authors) return undefined;
+          if (Array.isArray(authors)) return authors.join(', ');
+          if (typeof authors === 'string') return authors;
+          return String(authors);
+        };
+
+        const initialSummaryMessage = {
+          id: randomId(),
+          role: 'assistant' as const,
+          text: [
+            'Here is a structured summary of this paper:',
+            data.title ? `Title: ${data.title}` : undefined,
+            formatAuthors(data.authors) ? `Authors: ${formatAuthors(data.authors)}` : undefined,
+            data.abstract ? `Abstract: ${data.abstract}` : undefined,
+            data.key_results ? `Key results: ${data.key_results}` : undefined,
+            data.conclusion ? `Conclusion: ${data.conclusion}` : undefined
+          ]
+            .filter(Boolean)
+            .join('\n\n')
+        } as Message;
+
+        return {
+          summary: data,
+          messages: [initialSummaryMessage]
+        };
+      });
       return data;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to load summary';
