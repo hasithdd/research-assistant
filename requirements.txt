@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+pdfplumber
+pymupdf
+sentence-transformers
+qdrant-client
+pydantic-settings
+python-dotenv
+
+# Dev
+ruff
+pre-commit
+pytest
