@@ -1,5 +1,5 @@
-from pathlib import Path
 from app.services.pdf_parser import extract_text_and_metadata
+
 
 def test_extract_text_and_metadata_invalid_pdf(tmp_path):
     # create fake "pdf" text file
