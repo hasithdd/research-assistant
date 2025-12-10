@@ -1,5 +1,6 @@
 from app.services.pdf_parser import _heuristic_validate_structure
 
+
 def test_heuristic_validation():
     text = """
     ABSTRACT

@@ -33,8 +33,12 @@ def answer_query(paper_id: str, question: str) -> dict:
         summary = load_summary(paper_id) or {}
         text = summary.get("abstract") or ""
         if text:
+            snippet = text[:300]
             return {
-                "answer": f"I could not find exact matches, but here's something relevant: {text[:300]}...",
+                "answer": (
+                    "I could not find exact matches, but here's something "
+                    f"relevant: {snippet}..."
+                ),
                 "sources": [],
             }
         return {
