@@ -2,7 +2,6 @@ import { useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ChatPanel } from '../components/chat/ChatPanel';
 import { PdfViewer } from '../components/pdf/PdfViewer';
-import { SummaryDrawer } from '../components/summary/SummaryDrawer';
 import { useAppStore } from '../store/appStore';
 
 export default function PaperPage() {
@@ -72,16 +71,8 @@ export default function PaperPage() {
             <PdfViewer file={pdfUrl} />
           </div>
 
-          <div className="flex flex-col gap-4 min-h-[65vh] lg:min-h-[75vh]">
+          <div className="flex flex-col min-h-[65vh] lg:min-h-[75vh]">
             <ChatPanel messages={messages} onSend={handleSend} loading={isLoadingChat} />
-            <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-              <div className="px-4 py-2 text-xs text-muted border-b border-gray-200">
-                {isLoadingSummary ? 'Loading summary…' : 'Summary'}
-              </div>
-              <div className="p-3">
-                <SummaryDrawer summary={summary} />
-              </div>
-            </div>
           </div>
         </div>
       </div>

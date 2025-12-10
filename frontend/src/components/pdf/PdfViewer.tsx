@@ -11,10 +11,12 @@ export function PdfViewer({ file }: Props) {
   const [pageNumber, setPageNumber] = useState(1);
   const [numPages, setNumPages] = useState<number>(0);
   const [scale, setScale] = useState(1.1);
+  const [error, setError] = useState<string | null>(null);
 
   const handleLoad = ({ numPages: total }: { numPages: number }) => {
     setNumPages(total);
     setPageNumber(1);
+    setError(null);
   };
 
   return (
@@ -61,9 +63,32 @@ export function PdfViewer({ file }: Props) {
 
       <div className="flex-1 overflow-auto flex items-center justify-center">
         {file ? (
-          <Document file={file} onLoadSuccess={handleLoad} loading={<div className="text-sm text-muted">Loading PDF…</div>}>
-            <Page pageNumber={pageNumber} scale={scale} className={clsx('shadow-sm transition-transform')} renderTextLayer={false} renderAnnotationLayer={false} />
-          </Document>
+          error ? (
+            // Fallback to native PDF viewer if react-pdf fails
+            <iframe
+              src={file}
+              title="PDF preview"
+              className="w-full h-full border-0 rounded-b-xl bg-white"
+            />
+          ) : (
+            <Document
+              file={file}
+              onLoadSuccess={handleLoad}
+              onLoadError={(err) => {
+                console.error('PDF load error', err);
+                setError('Failed to load PDF file.');
+              }}
+              loading={<div className="text-sm text-muted">Loading PDF…</div>}
+            >
+              <Page
+                pageNumber={pageNumber}
+                scale={scale}
+                className={clsx('shadow-sm transition-transform')}
+                renderTextLayer={false}
+                renderAnnotationLayer={false}
+              />
+            </Document>
+          )
         ) : (
           <div className="text-muted text-sm">No PDF loaded yet.</div>
         )}

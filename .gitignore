@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .env
 storage/
+logs/
 
 venv/
 
@@ -21,3 +22,4 @@ frontend/yarn-error.log*
 frontend/.env.local
 frontend/.env.*.local
 
+analyze_logs.sh
