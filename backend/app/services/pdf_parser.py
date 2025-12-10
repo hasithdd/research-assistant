@@ -43,3 +43,23 @@ def _heuristic_validate_structure(text: str) -> bool:
     hits = sum(1 for sec in required_sections if sec in lower)
 
     return hits >= 3
+
+
+def extract_text_and_metadata(file_path: Path) -> tuple[str, dict]:
+    """Main PDF extraction pipeline: try both engines, pick best, validate."""
+
+    text1 = _extract_with_pdfplumber(file_path)
+    text2 = _extract_with_pymupdf(file_path)
+
+    best_text = text1 if len(text1) > len(text2) else text2
+
+    if len(best_text.strip()) == 0:
+        raise ValueError("Unable to extract text from PDF")
+
+    is_valid = _heuristic_validate_structure(best_text)
+    if not is_valid:
+        raise ValueError("PDF structure invalid: missing scientific sections")
+
+    metadata = _heuristic_metadata_from_text(best_text)
+
+    return best_text, metadata
