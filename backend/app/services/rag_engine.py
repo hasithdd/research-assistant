@@ -1,23 +1,47 @@
 import re
 
 from app.services.file_manager import load_summary
+from app.services.vectorstore import _inmem_index
 from app.services.vectorstore import query as vector_query
 
 
-def _keyword_score(text: str, query: str) -> int:
-    q_tokens = set(re.findall(r"\w+", query.lower()))
-    t_tokens = set(re.findall(r"\w+", text.lower()))
-    return len(q_tokens.intersection(t_tokens))
+def _keyword_retrieve_by_section(
+    paper_id: str, query: str, top_k: int = 5
+) -> list[dict]:
+    """
+    Keyword retriever: returns [{"text":..., "section":..., "score":...}]
+    Uses in-memory vectorstore if present, otherwise abstract summary fallback.
+    """
+    coll = f"paper_{paper_id}"
 
+    if coll in _inmem_index:
+        texts = _inmem_index[coll]["texts"]
+        metas = _inmem_index[coll]["meta"]
+    else:
+        summary = load_summary(paper_id) or {}
+        abstract = summary.get("abstract", "")
+        if not abstract:
+            return []
 
-def _keyword_retrieve(chunks: list[str], query: str, top_k: int = 3) -> list[str]:
+        texts = [p.strip() for p in abstract.split("\n\n") if len(p.strip()) > 20]
+        metas = [{"section": "abstract"} for _ in texts]
+
+    q_toks = set(re.findall(r"\w+", query.lower()))
     scored = []
-    for c in chunks:
-        score = _keyword_score(c, query)
-        if score > 0:
-            scored.append((score, c))
+
+    for text, meta in zip(texts, metas):
+        t_toks = set(re.findall(r"\w+", text.lower()))
+        overlap = len(q_toks & t_toks)
+        if overlap > 0:
+            scored.append((overlap, text, meta.get("section", "unknown")))
+
     scored.sort(key=lambda x: x[0], reverse=True)
-    return [c for _, c in scored[:top_k]]
+
+    out = []
+    for score, text, section in scored[:top_k]:
+        out.append({"text": text, "section": section, "score": float(score)})
+
+    return out
 
 
 def answer_query(paper_id: str, question: str) -> dict:
