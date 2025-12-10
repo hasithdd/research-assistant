@@ -27,7 +27,7 @@ async def upload_pdf(file: UploadFile = File(...)):
     try:
         text, metadata = extract_text_and_metadata(pdf_path)
     except Exception as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=f"PDF parsing failed: {e}")
 
     ingest_document(paper_id, text)
 
