@@ -12,6 +12,10 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Download embedding model during build to avoid startup delays
+COPY backend/download_model.py .
+RUN python download_model.py
+
 # Only copy backend sources to keep the image lean and module paths correct
 COPY backend/. .
 
