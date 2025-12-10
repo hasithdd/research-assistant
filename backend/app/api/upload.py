@@ -8,6 +8,7 @@ from app.services.file_manager import (
     save_pdf_file,
     save_summary,
 )
+from app.services.pdf_parser import extract_text_and_metadata
 
 router = APIRouter()
 
@@ -19,19 +20,23 @@ async def upload_pdf(file: UploadFile = File(...)):
 
     paper_id = str(uuid.uuid4())
     folder = create_paper_folder(paper_id)
+    pdf_path = save_pdf_file(folder, file.file)
 
-    save_pdf_file(folder, file.file)
+    try:
+        text, metadata = extract_text_and_metadata(pdf_path)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
-    placeholder_summary = {
-        "title": "Placeholder Title",
-        "authors": "Unknown",
-        "abstract": "No abstract yet.",
-        "problem_statement": "Not extracted.",
-        "methodology": "Not extracted.",
-        "key_results": "Not extracted.",
-        "conclusion": "Not extracted.",
+    summary = {
+        "title": metadata["title"],
+        "authors": metadata["authors"],
+        "abstract": "Not yet generated",
+        "problem_statement": "Not yet generated",
+        "methodology": "Not yet generated",
+        "key_results": "Not yet generated",
+        "conclusion": "Not yet generated",
     }
 
-    save_summary(folder, placeholder_summary)
+    save_summary(folder, summary)
 
-    return UploadResponse(paper_id=paper_id, summary=placeholder_summary)
+    return UploadResponse(paper_id=paper_id, summary=summary)
