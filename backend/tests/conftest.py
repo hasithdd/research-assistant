@@ -1,6 +1,7 @@
 import pytest
 from reportlab.pdfgen import canvas
-from pathlib import Path
+
+from backend.tests.mocks import mock_chatcompletion_create
 
 
 @pytest.fixture(scope="session")
@@ -14,3 +15,8 @@ def sample_pdf(tmp_path_factory):
     c.drawString(100, 720, "CONCLUSION Final remarks.")
     c.save()
     return path
+
+
+@pytest.fixture(autouse=True)
+def mock_openai(monkeypatch):
+    monkeypatch.setattr("openai.ChatCompletion.create", mock_chatcompletion_create)

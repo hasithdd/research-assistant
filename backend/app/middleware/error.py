@@ -1,8 +1,9 @@
-from fastapi import Request
-from fastapi.responses import JSONResponse
 import traceback
 import uuid
+
 from app.utils.logger import logger
+from fastapi import Request
+from fastapi.responses import JSONResponse
 
 
 async def exception_middleware(request: Request, call_next):
