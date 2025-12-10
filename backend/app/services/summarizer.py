@@ -74,3 +74,34 @@ def _llm_summarize_section(sec_name: str, sec_text: str) -> str:
         return resp["choices"][0]["message"]["content"].strip()
     except Exception:
         return sec_text[:400]
+
+
+def _llm_global_summary(section_summaries: dict) -> str:
+    if not settings.OPENAI_API_KEY:
+        combined = " ".join(section_summaries.values())
+        return combined[:600]
+
+    import openai
+
+    openai.api_key = settings.OPENAI_API_KEY
+
+    combined = "\n".join([f"{k}: {v}" for k, v in section_summaries.items()])
+
+    prompt = f"""
+    Based on the following section summaries from a research paper,
+    produce a clear 4–6 sentence global summary.
+
+    Section Summaries:
+    {combined}
+    """
+
+    try:
+        resp = openai.ChatCompletion.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=250,
+        )
+        return resp["choices"][0]["message"]["content"].strip()
+    except Exception:
+        return combined[:600]
