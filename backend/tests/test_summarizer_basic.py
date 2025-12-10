@@ -1,5 +1,6 @@
 from app.services.summarizer import generate_structured_summary
 
+
 def test_generate_structured_summary_basic():
     fake_text = (
         "This is a test abstract. "
