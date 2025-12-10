@@ -13,6 +13,12 @@ class ChatRequest(BaseModel):
     query: str
 
 
+class ChatSource(BaseModel):
+    section: str | None = None
+    index: int | None = None
+    raw: str | None = None
+
+
 class ChatResponse(BaseModel):
     answer: str
-    sources: List[str]
+    sources: List[ChatSource]
